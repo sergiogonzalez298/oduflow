@@ -2553,6 +2553,13 @@ def get_environment_info(env_name: str, ctx: Context | None = None) -> str:
     if info.get("extra_addons"):
         addons = ", ".join(f"{k}:{v}" for k, v in info["extra_addons"].items())
         lines.append(f"Extra addons: {addons}")
+    revisions = info.get("extra_addons_revisions")
+    if isinstance(revisions, dict) and revisions:
+        # The commit each extra repo is mounted at (a pinned one's, or the
+        # branch tip it was created or last updated with), so a caller can
+        # check what is mounted, not only what it asked for.
+        mounted = ", ".join(f"{k}:{v}" for k, v in revisions.items())
+        lines.append(f"Extra addons revisions: {mounted}")
     if info.get("env_vars"):
         env_display = ", ".join(f"{k}={v}" for k, v in info["env_vars"].items())
         lines.append(f"Env vars: {env_display}")

@@ -988,6 +988,51 @@ class TestInfoTool:
         assert "DB (shared)" in result
 
     @patch("oduflow.docker_ops.env_ops.get_environment_info")
+    def test_info_shows_the_mounted_extra_revisions(self, mock_info):
+        sha = "ac83149fbb14fb4340ddea6cc98b7d20c17c54ac"
+        tip = "0123456789abcdef0123456789abcdef01234567"
+        mock_info.return_value = {
+            "env_name": "main",
+            "db_name": "oduflow_1_main",
+            "workspace": "/srv/oduflow/instance_1/workspaces/main",
+            "all_running": True,
+            "repo_url": "https://github.com/example/repo.git",
+            "odoo_image": "odoo:19.0",
+            "template_name": "default",
+            "extra_addons": {"oca-web": f"19.0@{sha}", "enterprise": "19.0"},
+            "extra_addons_revisions": {"oca-web": sha, "enterprise": tip},
+            "git_user": "",
+            "odoo": {"status": "running", "running": True},
+            "db": {"status": "running", "running": True},
+        }
+
+        result = _call_tool("get_environment_info", env_name="main")
+
+        assert f"Extra addons: oca-web:19.0@{sha}, enterprise:19.0" in result
+        assert f"Extra addons revisions: oca-web:{sha}, enterprise:{tip}" in result
+
+    @patch("oduflow.docker_ops.env_ops.get_environment_info")
+    def test_info_without_revisions_prints_no_line(self, mock_info):
+        mock_info.return_value = {
+            "env_name": "main",
+            "db_name": "oduflow_1_main",
+            "workspace": "/srv/oduflow/instance_1/workspaces/main",
+            "all_running": True,
+            "repo_url": "https://github.com/example/repo.git",
+            "odoo_image": "odoo:19.0",
+            "template_name": "default",
+            "extra_addons": {"enterprise": "19.0"},
+            "extra_addons_revisions": {},
+            "git_user": "",
+            "odoo": {"status": "running", "running": True},
+            "db": {"status": "running", "running": True},
+        }
+
+        result = _call_tool("get_environment_info", env_name="main")
+
+        assert "Extra addons revisions" not in result
+
+    @patch("oduflow.docker_ops.env_ops.get_environment_info")
     def test_info_shows_live_mount(self, mock_info):
         mock_info.return_value = {
             "env_name": "main",
