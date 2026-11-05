@@ -36,6 +36,7 @@ from oduflow import (
     artifact_tokens,
     branding,
     bundled_upgrade,
+    connect_tokens,
     git_ops,
     image_builds,
     migrations,
@@ -390,6 +391,13 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+# Tools whose result IS a credential (a live login link or session cookie, a
+# new password): their result never goes into the server log.
+_SECRET_RESULT_TOOLS = frozenset(
+    {"connect_link", "connect_as_user", "reset_admin_password"}
+)
+
+
 def handle_errors(fn: Callable[P, R]) -> Callable[P, Awaitable[R]]:
     @functools.wraps(fn)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -405,6 +413,8 @@ def handle_errors(fn: Callable[P, R]) -> Callable[P, Awaitable[R]]:
                 )
                 if fn.__name__.startswith("production_odoo_"):
                     preview = "OduMCP call completed (business response omitted from server log)"
+                elif fn.__name__ in _SECRET_RESULT_TOOLS:
+                    preview = "result carries a credential (omitted from server log)"
                 logger.info("[%s] -> %s", fn.__name__, preview)
                 # White label: show the brand instead of the product name.
                 return branding.rebrand(result) if isinstance(result, str) else result  # type: ignore[return-value]
@@ -4012,6 +4022,62 @@ def connect_as_user(env_name: str, user: str, ctx: Context | None = None) -> str
         f"Playwright: context.add_cookies([{{'name': 'session_id', "
         f"'value': '{sid}', 'domain': '{domain}', 'path': '/'}}]) "
         f"then page.goto('{result['url']}')"
+    )
+
+
+@mcp.tool()
+@handle_errors
+@with_env_lock
+def connect_link(env_name: str, user: str = "admin", ctx: Context | None = None) -> str:
+    """
+    Mint a ONE-TIME login link that opens the environment in a person's browser
+    already logged in as `user`.
+
+    Returns exactly one URL and nothing else,
+    `https://<env-host>/oduflow-connect?token=...` — the same flow as the
+    dashboard's "Open" button. Opening the link sets the environment's
+    `session_id` cookie on its own host and redirects to `/web` authenticated,
+    without setting or revealing any password. Use it for an "Open as admin"
+    button in another app: hand the URL to a human's browser. For browser
+    automation (Playwright), use `connect_as_user`, which returns the raw cookie.
+
+    The link is SINGLE USE and EXPIRES IN 120 SECONDS: mint it at click time and
+    redirect the browser to it immediately — do not pre-generate, store or
+    share it. Until it is consumed it grants a full Odoo session as `user`:
+    treat the URL as a secret and never log it. Whoever can call this can
+    already `run_odoo_shell`, so it grants no new privilege.
+
+    Requires routing_mode = "traefik" (each environment on its own host); in
+    port mode it fails with a prerequisite error — use `connect_as_user` there.
+
+    Args:
+        env_name: The name of the environment.
+        user: The target user's login (e.g. "jane@acme.com") or numeric id.
+              Default "admin".
+    """
+    settings = _get_settings()
+    if settings.routing_mode != "traefik":
+        raise PrerequisiteNotMetError(
+            'connect_link requires routing_mode = "traefik": the one-time '
+            "link lands on the environment's own host (/oduflow-connect), which "
+            "only exists under Traefik routing. In port mode use "
+            "connect_as_user and set the returned session_id cookie instead."
+        )
+    team = _resolve_team(ctx)
+    woke = _wake_for_work(settings, team, env_name)
+    if woke:
+        logger.info("[connect_link] %s", woke.strip())
+    result = odoo_ops.connect_as_user(settings, team, env_name, user)
+    logger.info(
+        "[connect_link] one-time login link minted for %s (uid %s) in '%s'",
+        result["login"],
+        result["uid"],
+        env_name,
+    )
+    # The bare URL and nothing else: callers redirect a browser to the result
+    # as-is (no prose to strip), so it must stay exactly one URL.
+    return connect_tokens.login_link(
+        settings, team, result["cookie_domain"], result["sid"]
     )
 
 
